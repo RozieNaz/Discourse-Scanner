@@ -1,36 +1,53 @@
-import { BookOpen, FileText, Trash2, Wand2 } from 'lucide-react';
-import { generateChicagoCitation } from '../utils/bibParser';
+import { BookOpen, Check, Copy, FileText, Search, Square, Trash2 } from 'lucide-react';
 import { DIAGNOSTIC_CATEGORIES } from '../scanner';
+import { generateChicagoCitation, generateChicagoCitationParts } from '../utils/bibParser';
 
-export default function BibliographyCard({ entry, analysis, onDelete }) {
-  const handleCite = () => {
-    const citation = generateChicagoCitation(entry);
-    navigator.clipboard.writeText(citation);
-    alert('Citation copied to clipboard!');
-  };
-
-  const handleAiCorrection = () => {
-    alert('AI Correction feature coming soon!');
-  };
-
+export default function BibliographyCard({
+  entry,
+  analysis,
+  isSelected,
+  isAnalysed,
+  onToggleSelected,
+  onToggleAnalysis,
+  onDelete,
+}) {
   const hasAnalysis = analysis && Object.keys(analysis).length > 0;
+  const citation = generateChicagoCitationParts(entry);
+
+  const copyCitation = () => {
+    navigator.clipboard.writeText(generateChicagoCitation(entry));
+  };
+
+  const copyRaw = () => {
+    navigator.clipboard.writeText(`${entry.author} - ${entry.title}`);
+  };
 
   return (
-    <div className="bg-[#111322] border border-[#2a2d3d] rounded-lg mb-6 overflow-hidden flex">
-      {/* Left Icon Area */}
+    <div className={`bg-[#111322] border rounded-lg mb-6 overflow-hidden flex ${isSelected ? 'border-indigo-500/80 shadow-lg shadow-indigo-950/30' : 'border-[#2a2d3d]'}`}>
       <div className="w-16 flex justify-center py-4 bg-[#151726] border-r border-[#2a2d3d]">
-        <div className="w-10 h-10 rounded bg-[#1e2235] flex items-center justify-center">
-          <BookOpen size={20} className="text-slate-400" />
-        </div>
+        <button
+          type="button"
+          onClick={onToggleSelected}
+          className={`w-10 h-10 rounded flex items-center justify-center transition-colors ${isSelected ? 'bg-indigo-600 text-white' : 'bg-[#1e2235] text-slate-400 hover:text-white'}`}
+          title={isSelected ? 'Deselect source' : 'Select source'}
+        >
+          {isSelected ? <Check size={20} /> : <BookOpen size={20} />}
+        </button>
       </div>
 
-      {/* Main Content Area */}
       <div className="flex-1 p-5 flex flex-col">
-        {/* Header Row */}
-        <div className="flex justify-between items-start mb-2">
-          <div>
-            <h2 className="text-lg font-semibold text-slate-200 flex items-center gap-2">
-              {entry.title}
+        <div className="flex justify-between items-start gap-6 mb-2">
+          <div className="min-w-0">
+            <h2 className="text-lg font-semibold text-slate-100 flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={onToggleSelected}
+                className="text-slate-500 hover:text-indigo-300"
+                title={isSelected ? 'Deselect source' : 'Select source'}
+              >
+                <Square size={14} className={isSelected ? 'fill-indigo-500 text-indigo-500' : ''} />
+              </button>
+              <span>{entry.title}</span>
               {entry.year && entry.year !== 'n.d.' && (
                 <span className="text-xs bg-[#1e2235] text-slate-400 px-2 py-0.5 rounded border border-[#2a2d3d]">
                   {entry.year}
@@ -42,7 +59,7 @@ export default function BibliographyCard({ entry, analysis, onDelete }) {
                 </span>
               )}
             </h2>
-            <div className="text-sm text-[#8b92a5] flex items-center gap-2 mt-1">
+            <div className="text-sm text-[#8b92a5] flex items-center gap-2 mt-1 flex-wrap">
               <span className="text-[#64748b]">{entry.author}</span>
               {entry.publisher && (
                 <>
@@ -59,66 +76,86 @@ export default function BibliographyCard({ entry, analysis, onDelete }) {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <button
-              onClick={handleCite}
+              onClick={copyCitation}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-[#1e2235] hover:bg-[#2a2d3d] rounded border border-[#2a2d3d] transition-colors"
             >
               <FileText size={14} />
-              CITE
+              Cite
             </button>
             <button
-              onClick={handleAiCorrection}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-indigo-400 hover:text-indigo-300 bg-[#1e2235] hover:bg-[#2a2d3d] rounded border border-indigo-900/30 transition-colors"
+              onClick={copyRaw}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-[#1e2235] hover:bg-[#2a2d3d] rounded border border-[#2a2d3d] transition-colors"
             >
-              <Wand2 size={14} />
-              AI Correction
+              <Copy size={14} />
+              Copy
+            </button>
+            <button
+              onClick={onToggleAnalysis}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-indigo-300 hover:text-white bg-indigo-950/50 hover:bg-indigo-700 rounded border border-indigo-700/40 transition-colors"
+            >
+              <Search size={14} />
+              Analyse
             </button>
             <button
               onClick={() => onDelete(entry.id)}
               className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-950/30 rounded transition-colors"
-              title="Delete Entry"
+              title="Delete source"
             >
               <Trash2 size={18} />
             </button>
           </div>
         </div>
 
-        {/* Analysis Section */}
-        {hasAnalysis && (
-          <div className="mt-4 bg-[#0b0c16] rounded-md border border-[#1e2235] p-4">
-            {DIAGNOSTIC_CATEGORIES.map(category => {
-              const snippets = analysis[category.id];
-              if (!snippets || snippets.length === 0) return null;
+        {isAnalysed && (
+          <div className="mt-4 grid gap-4">
+            <div className="bg-[#0b0c16] rounded-md border border-[#1e2235] p-4">
+              <h3 className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider mb-2">
+                Chicago Full Note + Bibliography
+              </h3>
+              <div className="space-y-3 text-sm text-slate-300">
+                <p><span className="text-slate-500">Full note:</span> {citation.fullNote}</p>
+                <p><span className="text-slate-500">Bibliography:</span> {citation.bibliography}</p>
+              </div>
+            </div>
 
-              return (
-                <div key={category.id} className="mb-4 last:mb-0">
-                  <h3 className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider mb-2">
-                    {category.title}
-                  </h3>
-                  <div className="space-y-2">
-                    {snippets.map((snippet, idx) => (
-                      <div key={idx} className="flex items-start">
-                        {category.id === 'thesis' ? (
-                          <div className="text-sm text-slate-300 italic border-l-2 border-indigo-500/50 pl-3">
+            <div className="bg-[#0b0c16] rounded-md border border-[#1e2235] p-4">
+              <h3 className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider mb-2">
+                Source Analysis
+              </h3>
+              <p className="text-sm text-slate-400 mb-4">
+                {entry.abstract
+                  ? 'Analysed from the abstract and title.'
+                  : 'Limited analysis: this entry only has title-level metadata.'}
+              </p>
+              {hasAnalysis ? (
+                DIAGNOSTIC_CATEGORIES.map(category => {
+                  const snippets = analysis[category.id];
+                  if (!snippets || snippets.length === 0) return null;
+
+                  return (
+                    <div key={category.id} className="mb-4 last:mb-0">
+                      <h4 className="text-[10px] font-bold text-indigo-300 uppercase tracking-wider mb-2">
+                        {category.title}
+                      </h4>
+                      <div className="space-y-2">
+                        {snippets.map((snippet, idx) => (
+                          <div key={idx} className="text-sm text-slate-300 italic border-l-2 border-indigo-500/50 pl-3">
                             "{snippet}"
                           </div>
-                        ) : (
-                          <>
-                            <span className="text-indigo-500 mr-2 mt-1.5 text-[8px]">●</span>
-                            <span className="text-sm text-slate-400">{snippet}</span>
-                          </>
-                        )}
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
+                    </div>
+                  );
+                })
+              ) : (
+                <p className="text-sm text-slate-500">No discourse markers were found in this entry.</p>
+              )}
+            </div>
           </div>
         )}
 
-        {/* Footer info */}
         <div className="mt-4 flex items-center text-[10px] text-slate-600 font-mono">
           <FileText size={12} className="mr-1" />
           RAW: {entry.author} - {entry.title}
