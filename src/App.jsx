@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Upload, BookOpen, AlertCircle, CheckSquare, Copy, Search, Trash2, X } from 'lucide-react';
 import { generateChicagoCitation, parseBibtex, parseBibtexText } from './utils/bibParser';
+import { parseFile } from './utils/fileParser';
 import { scanText } from './scanner';
 import BibliographyCard from './components/BibliographyCard';
 
@@ -10,6 +11,7 @@ const enhanceEntries = (items) => items.map(entry => ({
 }));
 
 function App() {
+  const fileInputRef = useRef(null);
   const [entries, setEntries] = useState([]);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [analysedIds, setAnalysedIds] = useState(new Set());
@@ -56,16 +58,32 @@ function App() {
       if (file.name.endsWith('.bib')) {
         const parsedEntries = await parseBibtex(file);
         setEntries(enhanceEntries(parsedEntries));
-        setSelectedIds(new Set());
-        setAnalysedIds(new Set());
       } else {
-        setError('This import currently supports .bib files only.');
+        const text = await parseFile(file);
+        const sourceEntry = {
+          id: `${file.name}-${Date.now()}`,
+          type: 'document',
+          title: file.name.replace(/\.[^.]+$/, ''),
+          author: 'Imported document',
+          authors: [],
+          year: 'n.d.',
+          publisher: '',
+          address: '',
+          isbn: '',
+          language: 'EN',
+          abstract: text,
+          raw: { source: file.name },
+        };
+        setEntries(enhanceEntries([sourceEntry]));
       }
+      setSelectedIds(new Set());
+      setAnalysedIds(new Set());
     } catch (err) {
-      setError('Failed to read this source file. Please check that it is a valid .bib file.');
+      setError('Failed to read this source file. Try a .bib, .txt, .md, .pdf, or .docx file.');
       console.error(err);
     } finally {
       setIsScanning(false);
+      event.target.value = '';
     }
   };
 
@@ -160,11 +178,21 @@ function App() {
             </p>
           </div>
 
-          <label className="cursor-pointer inline-flex items-center px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded transition-colors shadow-lg shadow-indigo-500/20">
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="cursor-pointer inline-flex items-center px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded transition-colors shadow-lg shadow-indigo-500/20"
+          >
             <Upload size={18} className="mr-2" />
             Import Sources
-            <input type="file" className="hidden" accept=".bib" onChange={handleFileUpload} />
-          </label>
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            className="sr-only"
+            accept=".bib,.txt,.md,.pdf,.docx"
+            onChange={handleFileUpload}
+          />
         </header>
 
         {_error && (

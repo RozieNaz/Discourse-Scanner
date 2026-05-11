@@ -9,4 +9,4 @@ npm install
 npm run dev
 ```
 
-The bundled starter source list is stored at `public/references.bib`. You can also import a different `.bib` file inside the app.
+The bundled starter source list is stored at `public/references.bib`. You can also import `.bib`, `.txt`, `.md`, `.pdf`, and `.docx` files inside the app.
