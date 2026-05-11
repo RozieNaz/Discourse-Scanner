@@ -12,12 +12,19 @@ const enhanceEntries = (items) => items.map(entry => ({
 
 function App() {
   const fileInputRef = useRef(null);
+  const pasteInputRef = useRef(null);
   const [entries, setEntries] = useState([]);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [analysedIds, setAnalysedIds] = useState(new Set());
   const [isScanning, setIsScanning] = useState(false);
   const [_error, setError] = useState('');
   const selectedCount = selectedIds.size;
+
+  const importEntries = (nextEntries) => {
+    setEntries(enhanceEntries(nextEntries));
+    setSelectedIds(new Set());
+    setAnalysedIds(new Set());
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -48,8 +55,7 @@ function App() {
     };
   }, []);
 
-  const handleFileUpload = async (event) => {
-    const file = event.target.files[0];
+  const importFile = async (file) => {
     if (!file) return;
 
     setIsScanning(true);
@@ -57,9 +63,17 @@ function App() {
     try {
       if (file.name.toLowerCase().endsWith('.bib')) {
         const parsedEntries = await parseBibtex(file);
-        setEntries(enhanceEntries(parsedEntries));
+        importEntries(parsedEntries);
       } else {
-        const text = await parseFile(file);
+        let text = '';
+        try {
+          text = await parseFile(file);
+        } catch {
+          text = await file.text();
+        }
+
+        if (!text.trim()) throw new Error('No readable text found.');
+
         const sourceEntry = {
           id: `${file.name}-${Date.now()}`,
           type: 'document',
@@ -74,17 +88,53 @@ function App() {
           abstract: text,
           raw: { source: file.name },
         };
-        setEntries(enhanceEntries([sourceEntry]));
+        importEntries([sourceEntry]);
       }
-      setSelectedIds(new Set());
-      setAnalysedIds(new Set());
     } catch (err) {
-      setError('Failed to read this source file. Try a .bib, .txt, .md, .pdf, or .docx file.');
+      setError('I could not read that file. Best formats: .txt, .md, .pdf, .docx, or .bib.');
       console.error(err);
     } finally {
       setIsScanning(false);
+    }
+  };
+
+  const handleFileUpload = async (event) => {
+    const file = event.target.files[0];
+    await importFile(file);
+    if (event.target) {
       event.target.value = '';
     }
+  };
+
+  const handleDrop = async (event) => {
+    event.preventDefault();
+    await importFile(event.dataTransfer.files[0]);
+  };
+
+  const handlePasteImport = () => {
+    const text = pasteInputRef.current?.value || '';
+    if (!text.trim()) {
+      setError('Paste some source text first.');
+      return;
+    }
+
+    importEntries([{
+      id: `pasted-source-${Date.now()}`,
+      type: 'document',
+      title: 'Pasted source text',
+      author: 'Manual import',
+      authors: [],
+      year: 'n.d.',
+      publisher: '',
+      address: '',
+      isbn: '',
+      language: 'EN',
+      abstract: text,
+      raw: { source: 'manual paste' },
+    }]);
+
+    pasteInputRef.current.value = '';
+    setError('');
   };
 
   const handleDelete = (idToRemove) => {
@@ -186,13 +236,46 @@ function App() {
             <Upload size={18} className="mr-2" />
             Import Sources
           </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            className="sr-only"
-            onChange={handleFileUpload}
-          />
         </header>
+
+        <section
+          onDrop={handleDrop}
+          onDragOver={(event) => event.preventDefault()}
+          className="mb-8 rounded-lg border border-dashed border-indigo-500/50 bg-[#111322] p-5"
+        >
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-200">Import any source file</h2>
+                <p className="text-sm text-slate-500 mt-1">
+                  Best formats: PDF, DOCX, TXT, Markdown, or BibTeX. You can also drag a file here.
+                </p>
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                onChange={handleFileUpload}
+                className="text-sm text-slate-300 file:mr-3 file:rounded file:border-0 file:bg-indigo-600 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-indigo-500"
+              />
+            </div>
+
+            <div className="grid gap-3">
+              <textarea
+                ref={pasteInputRef}
+                className="h-24 w-full resize-y rounded border border-[#2a2d3d] bg-[#0b0c16] p-3 text-sm text-slate-300 outline-none focus:border-indigo-500"
+                placeholder="Or paste source text here..."
+              />
+              <button
+                type="button"
+                onClick={handlePasteImport}
+                className="w-fit inline-flex items-center gap-1.5 rounded border border-indigo-700/40 bg-indigo-950/50 px-3 py-1.5 text-xs font-medium text-indigo-200 hover:bg-indigo-700 hover:text-white"
+              >
+                <Upload size={14} />
+                Import pasted text
+              </button>
+            </div>
+          </div>
+        </section>
 
         {_error && (
           <div className="bg-red-950/50 text-red-400 p-4 rounded-lg mb-8 flex items-start border border-red-900/50">
