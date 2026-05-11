@@ -22,7 +22,7 @@ function App() {
       setError('');
 
       try {
-        const response = await fetch('/references.bib');
+        const response = await fetch(`${import.meta.env.BASE_URL}references.bib`);
         if (!response.ok) throw new Error('Default bibliography not found.');
 
         const text = await response.text();
