@@ -1,13 +1,47 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Upload, BookOpen, AlertCircle } from 'lucide-react';
-import { parseBibtex } from './utils/bibParser';
+import { parseBibtex, parseBibtexText } from './utils/bibParser';
 import { scanText } from './scanner';
 import BibliographyCard from './components/BibliographyCard';
+
+const enhanceEntries = (items) => items.map(entry => ({
+  ...entry,
+  analysis: scanText(entry.abstract || entry.title)
+}));
 
 function App() {
   const [entries, setEntries] = useState([]);
   const [isScanning, setIsScanning] = useState(false);
   const [_error, setError] = useState('');
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadDefaultBibliography = async () => {
+      setIsScanning(true);
+      setError('');
+
+      try {
+        const response = await fetch('/references.bib');
+        if (!response.ok) throw new Error('Default bibliography not found.');
+
+        const text = await response.text();
+        const parsedEntries = parseBibtexText(text);
+        if (isMounted) setEntries(enhanceEntries(parsedEntries));
+      } catch (err) {
+        console.error(err);
+        if (isMounted) setError('Could not load the default bibliography. You can still upload a .bib file.');
+      } finally {
+        if (isMounted) setIsScanning(false);
+      }
+    };
+
+    loadDefaultBibliography();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const handleFileUpload = async (event) => {
     const file = event.target.files[0];
@@ -18,14 +52,7 @@ function App() {
     try {
       if (file.name.endsWith('.bib')) {
         const parsedEntries = await parseBibtex(file);
-
-        // Enhance entries with analysis
-        const enhancedEntries = parsedEntries.map(entry => ({
-          ...entry,
-          analysis: scanText(entry.abstract || entry.title) // scan abstract, fallback to title
-        }));
-
-        setEntries(enhancedEntries);
+        setEntries(enhanceEntries(parsedEntries));
       } else {
         setError('Please upload a .bib file.');
       }
