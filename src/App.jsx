@@ -55,7 +55,7 @@ function App() {
     setIsScanning(true);
     setError('');
     try {
-      if (file.name.endsWith('.bib')) {
+      if (file.name.toLowerCase().endsWith('.bib')) {
         const parsedEntries = await parseBibtex(file);
         setEntries(enhanceEntries(parsedEntries));
       } else {
@@ -190,7 +190,6 @@ function App() {
             ref={fileInputRef}
             type="file"
             className="sr-only"
-            accept=".bib,.txt,.md,.pdf,.docx"
             onChange={handleFileUpload}
           />
         </header>
