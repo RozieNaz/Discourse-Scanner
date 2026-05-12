@@ -1,11 +1,50 @@
 import { useEffect, useRef, useState } from 'react';
-import { Upload, BookOpen, AlertCircle, CheckSquare, Copy, Search, Trash2, X } from 'lucide-react';
+import { AlertCircle, Archive, CheckSquare, Copy, Database, FilePlus, FolderPlus, Search, Sparkles, Trash2, X } from 'lucide-react';
 import { generateChicagoCitation, parseBibtex, parseBibtexText } from './utils/bibParser';
 import { parseFile } from './utils/fileParser';
 import { scanText } from './scanner';
 import BibliographyCard from './components/BibliographyCard';
 
 const STORAGE_KEY = 'discourse-scanner-state-v1';
+const DB_NAME = 'discourse-scanner-db';
+const DB_STORE = 'state';
+const DB_KEY = 'library';
+
+const openLocalDb = () => new Promise((resolve, reject) => {
+  const request = indexedDB.open(DB_NAME, 1);
+  request.onupgradeneeded = () => {
+    request.result.createObjectStore(DB_STORE);
+  };
+  request.onsuccess = () => resolve(request.result);
+  request.onerror = () => reject(request.error);
+});
+
+const loadLocalState = async () => {
+  const db = await openLocalDb();
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(DB_STORE, 'readonly').objectStore(DB_STORE).get(DB_KEY);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+};
+
+const saveLocalState = async (state) => {
+  const db = await openLocalDb();
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(DB_STORE, 'readwrite').objectStore(DB_STORE).put(state, DB_KEY);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
+};
+
+const clearLocalState = async () => {
+  const db = await openLocalDb();
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(DB_STORE, 'readwrite').objectStore(DB_STORE).delete(DB_KEY);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
+};
 
 const enhanceEntries = (items) => items.map(entry => ({
   ...entry,
@@ -31,33 +70,40 @@ const inferMetadata = (fileName, text) => {
 
 function App() {
   const fileInputRef = useRef(null);
-  const pasteInputRef = useRef(null);
+  const folderInputRef = useRef(null);
   const [entries, setEntries] = useState([]);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [analysedIds, setAnalysedIds] = useState(new Set());
   const [hasLoadedStorage, setHasLoadedStorage] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [_error, setError] = useState('');
+  const [queueText, setQueueText] = useState('');
   const selectedCount = selectedIds.size;
 
-  const importEntries = (nextEntries) => {
-    setEntries(enhanceEntries(nextEntries));
-    setSelectedIds(new Set());
-    setAnalysedIds(new Set());
+  const importEntries = (nextEntries, { append = true, analyse = false } = {}) => {
+    const enhanced = enhanceEntries(nextEntries);
+    setEntries(previous => append ? [...enhanced, ...previous] : enhanced);
+    setSelectedIds(new Set(enhanced.map(entry => entry.id)));
+    if (analyse) {
+      setAnalysedIds(previous => {
+        const next = new Set(previous);
+        enhanced.forEach(entry => next.add(entry.id));
+        return next;
+      });
+    }
   };
 
   useEffect(() => {
     let isMounted = true;
 
     const loadDefaultSources = async () => {
-      const saved = localStorage.getItem(STORAGE_KEY);
+      const saved = await loadLocalState().catch(() => null);
       if (saved) {
         try {
-          const parsed = JSON.parse(saved);
-          if (Array.isArray(parsed.entries) && parsed.entries.length) {
-            setEntries(parsed.entries);
-            setSelectedIds(new Set(parsed.selectedIds || []));
-            setAnalysedIds(new Set(parsed.analysedIds || []));
+          if (Array.isArray(saved.entries) && saved.entries.length) {
+            setEntries(saved.entries);
+            setSelectedIds(new Set(saved.selectedIds || []));
+            setAnalysedIds(new Set(saved.analysedIds || []));
             setHasLoadedStorage(true);
             return;
           }
@@ -94,80 +140,58 @@ function App() {
 
   useEffect(() => {
     if (!hasLoadedStorage) return;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+    saveLocalState({
       entries,
       selectedIds: [...selectedIds],
       analysedIds: [...analysedIds],
-    }));
+    }).catch((err) => {
+      console.error(err);
+      setError('Your browser refused to save the local library. Try deleting older imports or resetting local data.');
+    });
   }, [entries, selectedIds, analysedIds, hasLoadedStorage]);
 
-  const importFile = async (file) => {
+  const createQueuedEntry = (line, index = 0) => {
+    const value = line.trim();
+    const isUrl = /^https?:\/\//i.test(value);
+    const cleanedTitle = isUrl
+      ? value
+      : value.replace(/\.[a-z0-9]+$/i, '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+
+    return {
+      id: `queued-source-${Date.now()}-${index}`,
+      type: isUrl ? 'webpage' : 'document',
+      title: cleanedTitle || 'Untitled source',
+      author: '',
+      authors: [],
+      year: 'n.d.',
+      publisher: '',
+      address: '',
+      isbn: '',
+      language: 'EN',
+      abstract: value,
+      raw: { source: value },
+    };
+  };
+
+  const parseImportFile = async (file) => {
     if (!file) return;
 
-    setIsScanning(true);
-    setError('');
+    if (file.name.toLowerCase().endsWith('.bib')) {
+      return parseBibtex(file);
+    }
+
+    let text;
     try {
-      if (file.name.toLowerCase().endsWith('.bib')) {
-        const parsedEntries = await parseBibtex(file);
-        importEntries(parsedEntries);
-      } else {
-        let text = '';
-        try {
-          text = await parseFile(file);
-        } catch {
-          text = await file.text();
-        }
-
-        if (!text.trim()) throw new Error('No readable text found.');
-
-        const metadata = inferMetadata(file.name, text);
-        const sourceEntry = {
-          id: `${file.name}-${Date.now()}`,
-          type: 'document',
-          title: metadata.title,
-          author: metadata.author,
-          authors: [],
-          year: metadata.year,
-          publisher: '',
-          address: '',
-          isbn: '',
-          language: 'EN',
-          abstract: text,
-          raw: { source: file.name },
-        };
-        importEntries([sourceEntry]);
-      }
-    } catch (err) {
-      setError('I could not read that file. Best formats: .txt, .md, .pdf, .docx, or .bib.');
-      console.error(err);
-    } finally {
-      setIsScanning(false);
+      text = await parseFile(file);
+    } catch {
+      text = await file.text();
     }
-  };
 
-  const handleFileUpload = async (event) => {
-    const file = event.target.files[0];
-    await importFile(file);
-    if (event.target) {
-      event.target.value = '';
-    }
-  };
+    if (!text.trim()) throw new Error('No readable text found.');
 
-  const handleDrop = async (event) => {
-    event.preventDefault();
-    await importFile(event.dataTransfer.files[0]);
-  };
-
-  const handlePasteImport = () => {
-    const text = pasteInputRef.current?.value || '';
-    if (!text.trim()) {
-      setError('Paste some source text first.');
-      return;
-    }
-    const metadata = inferMetadata('Pasted source text', text);
-
-    importEntries([{
-      id: `pasted-source-${Date.now()}`,
+    const metadata = inferMetadata(file.name, text);
+    return [{
+      id: `${file.name}-${Date.now()}`,
       type: 'document',
       title: metadata.title,
       author: metadata.author,
@@ -178,10 +202,52 @@ function App() {
       isbn: '',
       language: 'EN',
       abstract: text,
-      raw: { source: 'manual paste' },
-    }]);
+      raw: { source: file.name },
+    }];
+  };
 
-    pasteInputRef.current.value = '';
+  const importFiles = async (fileList) => {
+    const files = [...fileList].filter(Boolean);
+    if (!files.length) return;
+
+    setIsScanning(true);
+    setError('');
+    try {
+      const parsedGroups = await Promise.all(files.map(parseImportFile));
+      importEntries(parsedGroups.flat(), { append: true, analyse: true });
+    } catch (err) {
+      setError('I could not read that file. Best formats: .txt, .md, .pdf, .docx, or .bib.');
+      console.error(err);
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  const handleFileUpload = async (event) => {
+    await importFiles(event.target.files);
+    if (event.target) {
+      event.target.value = '';
+    }
+  };
+
+  const handleDrop = async (event) => {
+    event.preventDefault();
+    await importFiles(event.dataTransfer.files);
+  };
+
+  const handleAnalyzeQueuedItems = () => {
+    const lines = queueText.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    if (!lines.length) {
+      if (selectedCount > 0) {
+        analyseSelected();
+      } else {
+        setAnalysedIds(new Set(entries.map(entry => entry.id)));
+      }
+      return;
+    }
+
+    importEntries(lines.map(createQueuedEntry), { append: true, analyse: true });
+    setQueueText('');
     setError('');
   };
 
@@ -276,74 +342,97 @@ function App() {
     clearSelection();
   };
 
-  const resetLocalLibrary = () => {
+  const resetLocalLibrary = async () => {
     localStorage.removeItem(STORAGE_KEY);
+    await clearLocalState().catch(console.error);
     window.location.reload();
   };
 
   return (
-    <div className="min-h-screen bg-[#0b0c10] text-slate-300 font-sans p-8">
-      <div className="max-w-5xl mx-auto">
-        {/* Header */}
-        <header className="mb-8 flex justify-between items-center">
+    <div className="min-h-screen bg-[#050817] text-slate-300 font-sans p-8">
+      <div className="fixed inset-0 pointer-events-none bg-indigo-950/20" />
+      <div className="relative max-w-6xl mx-auto">
+        <header className="mb-8 flex justify-between items-start gap-6">
           <div>
-            <h1 className="text-2xl font-bold text-white tracking-tight flex items-center gap-2">
-              <BookOpen className="text-indigo-500" />
-              Discourse Scanner
+            <h1 className="text-4xl font-bold text-slate-100 tracking-tight flex items-center gap-3">
+              <span className="h-14 w-14 rounded-2xl bg-indigo-600 shadow-lg shadow-indigo-950/40 flex items-center justify-center">
+                <Archive className="text-white" size={30} />
+              </span>
+              Discourse Studio
             </h1>
-            <p className="text-sm text-slate-500 mt-1">
-              Import sources and analyse discourse patterns.
+            <p className="text-lg text-slate-400 mt-4 max-w-2xl">
+              Extract metadata, prepare Chicago citations, and analyse source discourse in a local browser library.
             </p>
           </div>
 
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="cursor-pointer inline-flex items-center px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded transition-colors shadow-lg shadow-indigo-500/20"
-          >
-            <Upload size={18} className="mr-2" />
-            Import Sources
-          </button>
+          <div className="mt-6 flex items-center gap-2 rounded-xl border border-[#23304a] bg-[#10182a] p-1">
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-slate-300 hover:text-white hover:bg-[#1b2440]"
+            >
+              <FilePlus size={16} />
+              Files
+            </button>
+            <button
+              type="button"
+              onClick={() => folderInputRef.current?.click()}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-slate-300 hover:text-white hover:bg-[#1b2440]"
+            >
+              <FolderPlus size={16} />
+              Folder
+            </button>
+          </div>
         </header>
 
         <section
           onDrop={handleDrop}
           onDragOver={(event) => event.preventDefault()}
-          className="mb-8 rounded-lg border border-dashed border-indigo-500/50 bg-[#111322] p-5"
+          className="mb-12 rounded-2xl border border-[#23304a] bg-[#10182a]/95 p-6 shadow-2xl shadow-indigo-950/30"
         >
-          <div className="flex flex-col gap-4">
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div>
-                <h2 className="text-sm font-semibold text-slate-200">Import any source file</h2>
-                <p className="text-sm text-slate-500 mt-1">
-                  Best formats: PDF, DOCX, TXT, Markdown, or BibTeX. You can also drag a file here.
-                </p>
-              </div>
-              <input
-                ref={fileInputRef}
-                type="file"
-                onChange={handleFileUpload}
-                className="text-sm text-slate-300 file:mr-3 file:rounded file:border-0 file:bg-indigo-600 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-indigo-500"
-              />
-            </div>
-
-            <div className="grid gap-3">
+          <div className="grid gap-5">
+            <div className="flex items-start gap-4">
+              <Search className="mt-3 text-slate-500" size={24} />
               <textarea
-                ref={pasteInputRef}
-                className="h-24 w-full resize-y rounded border border-[#2a2d3d] bg-[#0b0c16] p-3 text-sm text-slate-300 outline-none focus:border-indigo-500"
-                placeholder="Or paste source text here..."
+                value={queueText}
+                onChange={(event) => setQueueText(event.target.value)}
+                className="min-h-28 flex-1 resize-y border-0 bg-transparent p-2 text-lg text-slate-200 outline-none placeholder:text-slate-600"
+                placeholder="Paste filenames, URLs, titles, or source text... Shift+Enter for multiple lines"
               />
               <button
                 type="button"
-                onClick={handlePasteImport}
-                className="w-fit inline-flex items-center gap-1.5 rounded border border-indigo-700/40 bg-indigo-950/50 px-3 py-1.5 text-xs font-medium text-indigo-200 hover:bg-indigo-700 hover:text-white"
+                onClick={handleAnalyzeQueuedItems}
+                className="mt-12 inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-indigo-950/40 hover:bg-indigo-500"
               >
-                <Upload size={14} />
-                Import pasted text
+                <Sparkles size={18} />
+                Analyse Items
               </button>
+            </div>
+            <div className="flex items-center justify-between text-xs text-slate-600">
+              <span>Supports files, folders, bulk paste, URLs, titles, PDFs, DOCX, TXT, Markdown, and BibTeX.</span>
+              <span className="inline-flex items-center gap-1">
+                <Database size={13} />
+                Stored locally
+              </span>
+            </div>
+            <div className="hidden">
+              <input ref={fileInputRef} type="file" multiple onChange={handleFileUpload} />
+              <input ref={folderInputRef} type="file" multiple onChange={handleFileUpload} />
             </div>
           </div>
         </section>
+
+        {entries.length === 0 && !isScanning && !_error && (
+          <div className="min-h-[360px] flex flex-col items-center justify-center text-center text-slate-500">
+            <div className="h-24 w-24 rounded-full border border-[#23304a] bg-[#10182a] flex items-center justify-center mb-8">
+              <Search size={44} className="text-slate-600" />
+            </div>
+            <h2 className="text-2xl font-bold text-slate-300">No items to analyse</h2>
+            <p className="mt-3 max-w-md text-slate-500">
+              Paste a filename, import source files, or add a folder to start building your local research archive.
+            </p>
+          </div>
+        )}
 
         {_error && (
           <div className="bg-red-950/50 text-red-400 p-4 rounded-lg mb-8 flex items-start border border-red-900/50">
@@ -358,14 +447,6 @@ function App() {
               <div className="h-8 w-8 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin mb-4"></div>
               <p className="text-slate-400">Parsing and analysing sources...</p>
             </div>
-          </div>
-        )}
-
-        {!isScanning && entries.length === 0 && !_error && (
-          <div className="text-center p-16 border-2 border-dashed border-[#2a2d3d] rounded-xl text-slate-500 flex flex-col items-center">
-            <BookOpen size={48} className="mb-4 text-[#2a2d3d]" />
-            <p className="text-lg font-medium text-slate-400 mb-2">No entries loaded</p>
-            <p className="text-sm">Import a source file to begin analysis.</p>
           </div>
         )}
 
