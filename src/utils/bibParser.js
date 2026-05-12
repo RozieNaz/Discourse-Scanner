@@ -53,6 +53,12 @@ const formatAuthors = (authorsArray) => {
 
 const clean = (value) => String(value || '').replace(/[{}]/g, '').trim();
 
+const authorsFromDisplayName = (author) => {
+  const value = clean(author);
+  if (!value || ['Imported document', 'Manual import', 'Unknown Author'].includes(value)) return [];
+  return value.split(/\s+(?:and|&)\s+|,\s+(?=[A-Z])/).map(name => ({ literal: name.trim() })).filter(author => author.literal);
+};
+
 const formatPersonNote = (author) => {
   if (!author) return '';
   if (author.literal) return clean(author.literal);
@@ -110,8 +116,9 @@ export const generateChicagoCitationParts = (entry) => {
   const publisher = clean(entry.publisher);
   const place = clean(entry.address);
   const edition = formatEdition(entry.raw?.edition);
-  const authorsNote = formatAuthorsNote(entry.authors);
-  const authorsBibliography = formatAuthorsBibliography(entry.authors);
+  const authors = entry.authors?.length ? entry.authors : authorsFromDisplayName(entry.author);
+  const authorsNote = formatAuthorsNote(authors);
+  const authorsBibliography = formatAuthorsBibliography(authors);
   const publisherBlock = [place, publisher].filter(Boolean).join(': ');
   const notePublication = [publisherBlock, year].filter(Boolean).join(', ');
   const bibliographyPublication = [publisherBlock, year].filter(Boolean).join(', ');

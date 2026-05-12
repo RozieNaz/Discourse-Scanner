@@ -5,10 +5,29 @@ import { parseFile } from './utils/fileParser';
 import { scanText } from './scanner';
 import BibliographyCard from './components/BibliographyCard';
 
+const STORAGE_KEY = 'discourse-scanner-state-v1';
+
 const enhanceEntries = (items) => items.map(entry => ({
   ...entry,
   analysis: scanText(entry.abstract || entry.title)
 }));
+
+const inferMetadata = (fileName, text) => {
+  const lines = text
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .slice(0, 30);
+  const title = lines.find(line => line.length > 8 && line.length < 160) || fileName.replace(/\.[^.]+$/, '');
+  const authorLine = lines.find(line => /^by\s+/i.test(line));
+  const yearMatch = text.match(/\b(19|20)\d{2}\b/);
+
+  return {
+    title,
+    author: authorLine ? authorLine.replace(/^by\s+/i, '') : '',
+    year: yearMatch ? yearMatch[0] : 'n.d.',
+  };
+};
 
 function App() {
   const fileInputRef = useRef(null);
@@ -16,6 +35,7 @@ function App() {
   const [entries, setEntries] = useState([]);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [analysedIds, setAnalysedIds] = useState(new Set());
+  const [hasLoadedStorage, setHasLoadedStorage] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [_error, setError] = useState('');
   const selectedCount = selectedIds.size;
@@ -30,6 +50,22 @@ function App() {
     let isMounted = true;
 
     const loadDefaultSources = async () => {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed.entries) && parsed.entries.length) {
+            setEntries(parsed.entries);
+            setSelectedIds(new Set(parsed.selectedIds || []));
+            setAnalysedIds(new Set(parsed.analysedIds || []));
+            setHasLoadedStorage(true);
+            return;
+          }
+        } catch (err) {
+          console.error(err);
+        }
+      }
+
       setIsScanning(true);
       setError('');
 
@@ -44,6 +80,7 @@ function App() {
         console.error(err);
         if (isMounted) setError('Could not load the default source list. You can still import a .bib file.');
       } finally {
+        if (isMounted) setHasLoadedStorage(true);
         if (isMounted) setIsScanning(false);
       }
     };
@@ -54,6 +91,15 @@ function App() {
       isMounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!hasLoadedStorage) return;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      entries,
+      selectedIds: [...selectedIds],
+      analysedIds: [...analysedIds],
+    }));
+  }, [entries, selectedIds, analysedIds, hasLoadedStorage]);
 
   const importFile = async (file) => {
     if (!file) return;
@@ -74,13 +120,14 @@ function App() {
 
         if (!text.trim()) throw new Error('No readable text found.');
 
+        const metadata = inferMetadata(file.name, text);
         const sourceEntry = {
           id: `${file.name}-${Date.now()}`,
           type: 'document',
-          title: file.name.replace(/\.[^.]+$/, ''),
-          author: 'Imported document',
+          title: metadata.title,
+          author: metadata.author,
           authors: [],
-          year: 'n.d.',
+          year: metadata.year,
           publisher: '',
           address: '',
           isbn: '',
@@ -117,14 +164,15 @@ function App() {
       setError('Paste some source text first.');
       return;
     }
+    const metadata = inferMetadata('Pasted source text', text);
 
     importEntries([{
       id: `pasted-source-${Date.now()}`,
       type: 'document',
-      title: 'Pasted source text',
-      author: 'Manual import',
+      title: metadata.title,
+      author: metadata.author,
       authors: [],
-      year: 'n.d.',
+      year: metadata.year,
       publisher: '',
       address: '',
       isbn: '',
@@ -149,6 +197,21 @@ function App() {
       next.delete(idToRemove);
       return next;
     });
+  };
+
+  const handleUpdateEntry = (idToUpdate, updates) => {
+    setEntries(entries.map(entry => {
+      if (entry.id !== idToUpdate) return entry;
+      const updatedEntry = {
+        ...entry,
+        ...updates,
+        authors: updates.author !== undefined ? [] : entry.authors,
+      };
+      return {
+        ...updatedEntry,
+        analysis: scanText(updatedEntry.abstract || updatedEntry.title),
+      };
+    }));
   };
 
   const toggleSelected = (id) => {
@@ -211,6 +274,11 @@ function App() {
       return next;
     });
     clearSelection();
+  };
+
+  const resetLocalLibrary = () => {
+    localStorage.removeItem(STORAGE_KEY);
+    window.location.reload();
   };
 
   return (
@@ -308,6 +376,7 @@ function App() {
                 <div className="text-sm font-medium text-slate-500">
                   Showing {entries.length} entries
                   {selectedCount > 0 && <span className="text-indigo-300"> | {selectedCount} selected</span>}
+                  <span className="text-slate-600"> | stored locally</span>
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -318,6 +387,13 @@ function App() {
                   >
                     <CheckSquare size={14} />
                     {selectedCount === entries.length ? 'Clear all' : 'Select all'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={resetLocalLibrary}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-[#1e2235] hover:bg-[#2a2d3d] rounded border border-[#2a2d3d]"
+                  >
+                    Reset local
                   </button>
                   {selectedCount > 0 && (
                     <>
@@ -375,6 +451,7 @@ function App() {
                 isAnalysed={analysedIds.has(entry.id)}
                 onToggleSelected={() => toggleSelected(entry.id)}
                 onToggleAnalysis={() => toggleAnalysis(entry.id)}
+                onUpdateEntry={(updates) => handleUpdateEntry(entry.id, updates)}
                 onDelete={handleDelete}
               />
             ))}
